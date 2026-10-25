@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistant support IT</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6eb;
+    --accent: #2f5bd3; --accent-text: #ffffff; --user: #e8eefc;
+    --ok: #1f7a4d; --warn: #b54708; --stop: #b42318; --info: #475467;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1f27; --text: #e6e9ef; --muted: #98a2b3; --line: #2b313c;
+      --accent: #6d8ff0; --accent-text: #0d1117; --user: #243150;
+      --ok: #4cc38a; --warn: #f5a524; --stop: #f97066; --info: #98a2b3;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { max-width: 820px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
+  header { padding: 20px 0 12px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+  #fil { flex: 1; padding: 16px 0; display: flex; flex-direction: column; gap: 14px; }
+  .msg { max-width: 88%; padding: 12px 14px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: var(--user); }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .meta { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); white-space: normal; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+  .badge { border-radius: 999px; padding: 2px 10px; font-weight: 600; color: var(--panel); }
+  .badge.repondre { background: var(--ok); } .badge.escalader { background: var(--warn); }
+  .badge.refuser { background: var(--stop); } .badge.hors_perimetre { background: var(--info); }
+  .ticket { margin-top: 10px; }
+  .msg code { font-family: ui-monospace, Consolas, monospace; font-size: 14px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+  .ticket button { background: none; border: 1px solid var(--warn); color: var(--warn); border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; }
+  .exemples { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0 12px; }
+  .exemples button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 14px; }
+  form { position: sticky; bottom: 0; background: var(--bg); padding: 12px 0 20px; display: flex; gap: 8px; border-top: 1px solid var(--line); }
+  input { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: inherit; }
+  form button { padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 600; cursor: pointer; }
+  form button:disabled { opacity: .5; cursor: default; }
+  #micro { background: var(--panel); color: var(--text); border: 1px solid var(--line); padding: 0 14px; }
+  #micro.enregistre { background: var(--stop); color: var(--panel); border-color: var(--stop); }
+  .options { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; color: var(--muted); font-size: 14px; padding-bottom: 8px; }
+  .options label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  #etat { margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Assistant support IT</h1>
+    <p>Prototype local : les réponses viennent uniquement des fiches de support. Données fictives.</p>
+  </header>
+  <div id="fil"></div>
+  <div class="exemples" id="exemples"></div>
+  <div class="options">
+    <label><input type="checkbox" id="lireVoix" checked> Réponse vocale</label>
+    <span id="etat"></span>
+  </div>
+  <form id="form">
+    <button type="button" id="micro" title="Cliquer pour parler, cliquer à nouveau pour envoyer" aria-label="Parler">🎙</button>
+    <input id="q" autocomplete="off" placeholder="Décrivez votre problème, ou cliquez sur le micro…" aria-label="Votre question">
+    <button id="envoyer">Envoyer</button>
+  </form>
+</div>
+<script>
+const EXEMPLES = [
+  "J'ai oublié mon mot de passe",
+  "Le vidéoprojecteur affiche pas de signal",
+  "On m'a volé mon ordinateur portable",
+  "Donne-moi le mot de passe de ma collègue",
+];
+const LIBELLES = { repondre: "Résolu par la fiche", escalader: "À escalader", refuser: "Refusé", hors_perimetre: "Hors périmètre" };
+const $ = (id) => document.getElementById(id);
+const fil = $("fil"), form = $("form"), champ = $("q"), bouton = $("envoyer"), micro = $("micro"),
+      lireVoix = $("lireVoix"), etat = $("etat");
+let historique = [], voixDispo = false, occupe = false;
+
+for (const ex of EXEMPLES) {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = ex;
+  b.onclick = () => { champ.value = ex; form.requestSubmit(); };
+  $("exemples").appendChild(b);
+}
+
+fetch("/api/sante").then(r => r.json()).then(s => {
+  voixDispo = !s.voix.erreur;
+  etat.textContent = voixDispo ? `Voix : Whisper ${s.voix.stt} sur ${s.voix.stt_device}, Piper` : "Voix indisponible";
+  if (!voixDispo) { micro.disabled = true; lireVoix.checked = false; lireVoix.disabled = true; micro.title = s.voix.erreur; }
+}).catch(() => { etat.textContent = "Serveur injoignable"; });
+
+// --- Lecture des réponses audio, phrase par phrase ---
+const fileAudio = []; let lecture = null, surPremierSon = null;
+function jouer(b64) { fileAudio.push(b64); if (!lecture) suivant(); }
+function suivant() {
+  const b64 = fileAudio.shift();
+  if (!b64) { lecture = null; return; }
+  lecture = new Audio("data:audio/wav;base64," + b64);
+  lecture.onended = suivant; lecture.onerror = suivant;
+  lecture.onplaying = () => { if (surPremierSon) { surPremierSon(); surPremierSon = null; } };
+  lecture.play().catch(suivant);
+}
+function couperAudio() { fileAudio.length = 0; if (lecture) { lecture.pause(); lecture = null; } }
+
+// Mise en forme minimale des réponses du LLM : gras et code, le reste en texte brut.
+function rendre(texte) {
+  const esc = texte.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function bulle(classe, texte) {
+  const d = document.createElement("div");
+  d.className = "msg " + classe;
+  d.textContent = texte;
+  fil.appendChild(d);
+  d.scrollIntoView({ block: "end" });
+  return d;
+}
+
+async function lireFlux(reponse, surEvenement) {
+  if (!reponse.ok) throw new Error(await reponse.text());
+  const lecteur = reponse.body.getReader(), dec = new TextDecoder();
+  let tampon = "";
+  while (true) {
+    const { value, done } = await lecteur.read();
+    if (done) break;
+    tampon += dec.decode(value, { stream: true });
+    const blocs = tampon.split("\n\n"); tampon = blocs.pop();
+    for (const bloc of blocs) if (bloc.startsWith("data: ")) surEvenement(JSON.parse(bloc.slice(6)));
+  }
+}
+
+// Une question (écrite ou orale) et sa réponse. `t0` = fin de parole ou envoi du texte.
+async function poser({ question, audio }) {
+  occupe = true; bouton.disabled = true; micro.disabled = true; couperAudio();
+  const t0 = performance.now();
+  const bulleUser = bulle("user", question || "🎙 …");
+  const bot = bulle("bot", "…");
+  const corps = document.createElement("span");
+  let texte = "", sources = [], questionFinale = question, premierSon = null;
+  const avecVoix = voixDispo && (audio || lireVoix.checked);
+  surPremierSon = () => { premierSon = (performance.now() - t0) / 1000; majChrono(); };
+  let chrono = null;
+  const majChrono = () => { if (chrono && premierSon) chrono.textContent += ` · 1er son ${premierSon.toFixed(1)} s`; };
+  try {
+    let rep;
+    if (avecVoix) {
+      const fd = new FormData();
+      if (audio) fd.append("audio", audio, "question.webm"); else fd.append("question", question);
+      fd.append("historique", JSON.stringify(historique));
+      rep = await fetch("/api/voix", { method: "POST", body: fd });
+    } else {
+      rep = await fetch("/api/chat/flux", { method: "POST", headers: { "Content-Type": "application/json" },
+                                             body: JSON.stringify({ question, historique }) });
+    }
+    bot.textContent = ""; bot.appendChild(corps);
+    await lireFlux(rep, (ev) => {
+      if (ev.type === "transcription") {
+        questionFinale = ev.texte;
+        bulleUser.textContent = ev.texte ? "🎙 " + ev.texte : "🎙 (rien entendu)";
+      }
+      if (ev.type === "sources") sources = ev.sources;
+      if (ev.type === "texte") { texte += ev.texte; corps.innerHTML = rendre(texte); bot.scrollIntoView({ block: "end" }); }
+      if (ev.type === "audio" && lireVoix.checked) jouer(ev.wav_b64);
+      if (ev.type === "fin") {
+        if (ev.vide) { bot.textContent = "Je n'ai rien entendu. Pouvez-vous répéter ?"; return; }
+        chrono = afficherFin(bot, ev, sources, (performance.now() - t0) / 1000); majChrono();
+      }
+    });
+    if (texte) historique.push({ role: "user", content: questionFinale }, { role: "assistant", content: texte.trim() });
+  } catch (err) {
+    bot.textContent = "Erreur : " + (err.message || "le serveur ne répond pas. Vérifiez qu'Ollama et l'API sont lancés.");
+  }
+  occupe = false; bouton.disabled = false; micro.disabled = !voixDispo; champ.focus();
+}
+
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const question = champ.value.trim();
+  if (!question || occupe) return;
+  champ.value = "";
+  poser({ question });
+});
+
+// --- Micro : un clic pour parler, un clic pour envoyer ---
+let enregistreur = null, morceaux = [];
+micro.addEventListener("click", async () => {
+  if (enregistreur) { enregistreur.stop(); return; }
+  couperAudio();
+  let flux;
+  try { flux = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { etat.textContent = "Accès au micro refusé"; return; }
+  const type = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find(t => MediaRecorder.isTypeSupported(t));
+  enregistreur = new MediaRecorder(flux, type ? { mimeType: type } : undefined);
+  morceaux = [];
+  enregistreur.ondataavailable = (e) => { if (e.data.size) morceaux.push(e.data); };
+  enregistreur.onstop = () => {
+    flux.getTracks().forEach(t => t.stop());
+    const blob = new Blob(morceaux, { type: enregistreur.mimeType });
+    enregistreur = null; micro.classList.remove("enregistre"); micro.textContent = "🎙";
+    if (blob.size > 0) poser({ audio: blob });
+  };
+  enregistreur.start();
+  micro.classList.add("enregistre"); micro.textContent = "■";
+});
+
+function afficherFin(bot, ev, sources, total) {
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const badge = document.createElement("span");
+  badge.className = "badge " + ev.action; badge.textContent = LIBELLES[ev.action] || ev.action;
+  meta.appendChild(badge);
+  for (const s of sources) {
+    if (!ev.citees.includes(s.id)) continue;
+    const c = document.createElement("span");
+    c.className = "chip"; c.title = s.titre; c.textContent = `${s.id} · ${s.titre}`;
+    meta.appendChild(c);
+  }
+  const t = document.createElement("span");
+  t.textContent = `1er mot ${(ev.premier_token_ms / 1000).toFixed(1)} s · total ${total.toFixed(1)} s`;
+  meta.appendChild(t);
+  bot.appendChild(meta);
+  if (ev.action === "escalader") {
+    const d = document.createElement("div");
+    d.className = "ticket";
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = "Ouvrir un ticket (démo)";
+    b.onclick = () => { b.disabled = true; b.textContent = "Ticket créé (démo, rien n'est envoyé)"; };
+    d.appendChild(b); bot.appendChild(d);
+  }
+  bot.scrollIntoView({ block: "end" });
+  return t;
+}
+</script>
+</body>
+</html>
